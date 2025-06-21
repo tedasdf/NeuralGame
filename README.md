@@ -17,7 +17,6 @@ The robot is programmed to replicate LED light sequences using **four physical b
 ---
 
 ## System Architecture
-```plaintext
 [Python RL Agent]  <== WebSocket ==>  [ESP32 Microcontroller]  <==>  [Robot Hardware]
 
 

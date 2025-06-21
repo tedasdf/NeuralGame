@@ -8,7 +8,7 @@ The robot is programmed to replicate LED light sequences using **four physical b
 ---
 
 ## Features
-- ✅ Custom-built robot design (Fusion 360 CAD)
+- []  Custom-built robot design (Fusion 360 CAD)
 - ✅ Four-button control interface for interacting with LED sequences
 - ✅ Reinforcement learning environment for training the robot to reproduce sequences
 - ✅ Real-time, bi-directional communication between ESP32 and Python

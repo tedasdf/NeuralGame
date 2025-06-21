@@ -19,3 +19,28 @@ The robot is programmed to replicate LED light sequences using **four physical b
 ## System Architecture
 ```plaintext
 [Python RL Agent]  <== WebSocket ==>  [ESP32 Microcontroller]  <==>  [Robot Hardware]
+
+
+## Technologies Used
+
+* **Python**: Game engine, RL training environment  
+* **ESP32**: Microcontroller handling robot hardware logic  
+* **WebSocket**: Real-time, two-way communication  
+* **Fusion 360**: Robot design and CAD files  
+* **Stable-Baselines3 (or your RL library)**: Reinforcement learning framework  
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+* Python 3.x  
+* ESP32 development environment (e.g., Arduino IDE or PlatformIO)  
+* WebSocket Python library (`websocket-client`)  
+
+### Run the Python Controller
+
+```bash
+pip install websocket-client stable-baselines3
+python controller.py

@@ -36,28 +36,40 @@ R"=====(
 <body>
    <h1>E S P 3 2<br>WebSocket Server</h1>
    <a href="#" id="btn" ONCLICK='button()'> </a>
+   <p id="status" style="font-size: 24px; color: lime;"></p>
 <!-----------------------------JavaScript--------------------------->
   <script>
-     InitWebSocket()
-     function InitWebSocket()
-     {
-       websock = new WebSocket('ws://'+window.location.hostname+':81/'); 
-       websock.onmessage = function(evt)
-       {
-          JSONobj = JSON.parse(evt.data);
+    InitWebSocket();
+    function InitWebSocket() {
+      websock = new WebSocket('ws://' + window.location.hostname + ':81/');
+      
+      websock.onmessage = function(evt) {
+        const JSONobj = JSON.parse(evt.data);
+
+        // LED update logic
+        if (JSONobj.LEDonoff) {
           document.getElementById('btn').innerHTML = JSONobj.LEDonoff;
-          if(JSONobj.LEDonoff == 'ON')
-          {
-            document.getElementById('btn').style.background='#FF0000';
-            document.getElementById('btn').style["boxShadow"] = "0px 0px 0px 8px #FF0000";
+          if (JSONobj.LEDonoff === 'ON') {
+            document.getElementById('btn').style.background = '#FF0000';
+            document.getElementById('btn').style.boxShadow = '0px 0px 0px 8px #FF0000';
+          } else {
+            document.getElementById('btn').style.background = '#111111';
+            document.getElementById('btn').style.boxShadow = '0px 0px 0px 8px #111111';
           }
-          else
-          {
-            document.getElementById('btn').style.background='#111111';
-            document.getElementById('btn').style["boxShadow"] = "0px 0px 0px 8px #111111";
-          }
-       }
-     }
+        }
+
+        // ✅ Button press handling
+        if (JSONobj.button === 'pressed') {
+          const info = document.getElementById('status');
+          info.innerText = 'Button was pressed!';
+          info.style.color = 'lime';
+          setTimeout(() => {
+            info.innerText = '';
+          }, 2000);
+        }
+      };
+    }
+
      //-------------------------------------------------------------
      function button()
      {

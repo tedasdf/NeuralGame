@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "../../ESP32helloworld"
+		},
+		{
+			"name": "ESP32WiFiConnect",
+			"path": "../../ESP32WiFiConnect"
+		},
+		{
+			"name": "ESP32-Websockets",
+			"path": "../../ESP32-Websockets"
+		},
+		{
+			"name": "ESP32Web",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}

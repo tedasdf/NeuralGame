@@ -8,8 +8,8 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 //-----------------------------------------------
-const char* ssid = "OPTUS_264100N";
-const char* password = "eagle36379hf";
+const char* ssid = "";
+const char* password = "";
 //-----------------------------------------------
 #define LED1 26
 #define LED2 25

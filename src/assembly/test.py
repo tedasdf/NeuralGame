@@ -398,7 +398,7 @@ class PacmanTrainer:
             port=6379, 
             db=0, 
             decode_responses=False, 
-            password="pacman", 
+            password=os.getenv('REDIS_PASSWORD', None),
             health_check_interval=30, 
             socket_keepalive=True,
             retry=Retry(ExponentialBackoff(cap=10, base=1), 25),

@@ -60,5 +60,4 @@ python controller.py
 └── .env
 
 
-
-https://download.stereolabs.com/zedsdk/5.0/l4t35.4/ZED_SDK_L4T35.4_JETSON_XAVIER.run
+wget --content-disposition --user-agent="Mozilla/5.0" https://download.stereolabs.com/zedsdk/5.0/l4t35.4/ZED_SDK_L4T35.4_JETSON_XAVIER.run

@@ -43,3 +43,22 @@ The robot is programmed to replicate LED light sequences using **four physical b
 ```bash
 pip install websocket-client stable-baselines3
 python controller.py
+```
+
+``` bash
+├── docker-compose.yaml
+├── rabbitMQ.Dockerfile
+├── rabbit_init.sh
+├── worker/
+│   ├── Dockerfile
+│   └── upload_worker.py
+├── pacman/
+│   ├── train.py
+│   └── env/
+│       └── pacman_env.py
+├── redis.conf
+└── .env
+
+
+
+https://download.stereolabs.com/zedsdk/5.0/l4t35.4/ZED_SDK_L4T35.4_JETSON_XAVIER.run

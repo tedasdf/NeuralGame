@@ -42,43 +42,6 @@ class DataCollectorCallback(BaseCallback):
         self.actions_buffer = []
         self.max_batch_size = 500 * 1024 * 1024  # 500 MB
 
-    def _setup_communication(self):
-        """Set up RabbitMQ and Redis connections."""
-        if not self.enable_rmq:
-            logging.info("RMQ and Redis setup skipped because enable_rmq=False")
-            return
-
-        try:
-            credentials = pika.PlainCredentials('robot', 'robot_pass')
-            parameters = pika.ConnectionParameters(
-                host='localhost',
-                port=5672,
-                virtual_host='/',
-                credentials=credentials
-            )
-            self.connection = pika.BlockingConnection(parameters)
-            self.channel = self.connection.channel()
-            self.channel.queue_declare(queue='HF_upload_queue')
-            logging.info("RabbitMQ connection and queue declared successfully.")
-        except Exception as e:
-            logging.error(f"Failed to setup RabbitMQ: {e}")
-
-        try:
-            self.redis_client = redis.StrictRedis(
-                host='redis',
-                port=6379,
-                db=0,
-                decode_responses=False,
-                password=os.getenv('REDIS_PASSWORD', None),
-                health_check_interval=30,
-                socket_keepalive=True,
-                retry=Retry(ExponentialBackoff(cap=10, base=1), 25),
-                retry_on_error=[ConnectionError, TimeoutError]
-            )
-            self.redis_client.ping()
-            logging.info("Redis client initialized and connection tested successfully.")
-        except Exception as e:
-            logging.error(f"Failed to setup Redis client: {e}")
 
     def _publish_keys_to_queue(self):
         if self.enable_rmq:
@@ -87,9 +50,6 @@ class DataCollectorCallback(BaseCallback):
             logging.info(f"Published keys to RabbitMQ queue: {self.episode_keys_buffer}")
             self.episode_keys_buffer.clear()
 
-    def _close_rabbitmq(self):
-        if self.connection:
-            self.connection.close()
 
     def _save_data_to_redis(self, episode):
         """Save current buffer to Redis with compression."""
@@ -131,11 +91,6 @@ class DataCollectorCallback(BaseCallback):
         self.frames_buffer.clear()
         self.actions_buffer.clear()
 
-    def _on_training_start(self):
-        self._setup_communication()
-
-    def _on_training_end(self):
-        self._close_rabbitmq()
 
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [])
@@ -202,15 +157,52 @@ class WandbCallback(BaseCallback):
         return True
 
 
-# Example usage
-if __name__ == "__main__":
-    import gymnasium as gym
-    from stable_baselines3 import SAC
 
-    env = gym.make("Pendulum-v1")
+if __name__ == "__main__":
+    from Robot import Robot
+    from RobotEnv import RobotEnv
+    import numpy as np
+    import cv2
+    from stable_baselines3 import SAC
+    from stable_baselines3.sac.policies import SACPolicy
+    from MultiCamFeatureExtractor import MultiCamFeatureExtractor
+    from game import Game
+    import gymnasium as gym
+    import time
+    import os
+    import logging
+
+    game_model = Game(
+        url="ws://localhost:8080",  # Example URL, adjust as necessary 
+        sequence_length=4  # Example sequence length
+    )
+
+    robot_model = Robot(
+        L1 = 6,
+        L2 = 7, 
+        L3 = 7, 
+        serial_port='COM3',
+        init_position=(0, 0 , 0), # not yet set
+        test_mode=False
+    )
+
+    robot_env = RobotEnv(
+        robot_model,
+        game_model,
+        num_colors =4 ,
+        num_lights =4,
+        time_limit = 60, # 1 minute
+    )
+
+    policy_kwargs = dict(
+        features_extractor_class=MultiCamFeatureExtractor,
+        features_extractor_kwargs=dict(features_dim=256),
+    )
 
     data_collector_cb = DataCollectorCallback( save_path="./models", enable_rmq=True, save_locally=True)
     train_logger_cb = TrainLoggingCallback(save_freq=5000, save_path="./models")
 
     model = SAC("MlpPolicy", env, verbose=1)
-    model.learn(total_timesteps=1000, callback=[data_collector_cb, train_logger_cb])
+    model.learn(total_timesteps=100000, callback=[data_collector_cb, train_logger_cb])
+
+  

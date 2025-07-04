@@ -5,19 +5,20 @@ import websocket
 import threading
 
 class Game:
-    def __init__(self, url):
+    def __init__(self, url, sequence_length):
 
+        self.num_sequences = sequence_length
         self.sequence = []
         self.player_sequence = []
 
         self.active = False
-
-        self.starttime = None
-        self.timeout = 30
         
         self.url = url
         self.connected = False
 
+        self.reward = None
+        
+        
         self.ws = websocket.WebSocketApp(
             url,
             on_message=lambda ws, msg: self.on_message(ws, msg),
@@ -48,13 +49,12 @@ class Game:
 
         self.beginning_seq()
 
-    def beginning_seq(self, length=4):
-        self.sequence = random.sample(range(4), length)
+    def beginning_seq(self):
+        self.sequence = random.sample(range(self.num_sequences), self.num_sequences)
         self.player_progress = 0
         self.active = True
-        self.starttime = time.time()
         print(f"Generated sequence: {self.sequence}")
-        return self.sequence
+        
 
     def check_sequence(self):
         info = {}
@@ -118,7 +118,7 @@ class Game:
 
 
 if __name__ == "__main__":
-    ESP32_IP = "192.168.0.69"  # Replace with your ESP32's IP
+    ESP32_IP = "192.168.0.100"  # Replace with your ESP32's IP
     PORT = 81                   # Your ESP32 WebSocket port
     url = f"ws://{ESP32_IP}:{PORT}"
 

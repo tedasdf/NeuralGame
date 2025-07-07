@@ -7,22 +7,25 @@ import serial
 import modern_robotics as mr
 import math
 import matplotlib.pyplot as plt
+import os
 ####
 #  Robot class for controlling the robot and capturing images
 #  interact with arudnio to send arudino signal for the movement
-#  
+#  init angle 105,35,0
 
 class Robot:
     def __init__(self,
                  L1, L2, L3, 
+                 x_offset , y_offset , z_offset,
                  serial_port='COM3',
-                 init_theta=(np.pi/2, np.pi/2, np.pi/2  ),
+                 init_thetas=np.deg2rad(np.array([100, 40, 0])),
                  test_mode=True):
         self.test_mode = test_mode
 
         
         # connect to camera
-        self.url = "http://192.168.0.102/capture"
+        self.cap = cv2.VideoCapture("rtsp://192.168.0.102:554/mjpeg/1")
+        # self.url = "http://192.168.0.102/capture"
         if not self.test_mode:
             # ceonnect to arduino
             self.ser = serial.Serial(serial_port, 9600, timeout=1, write_timeout=1)
@@ -35,6 +38,10 @@ class Robot:
         self.L1 = L1
         self.L2 = L2
         self.L3 = L3
+        self.x_offset = x_offset
+        self.y_offset = y_offset
+        self.z_offset = z_offset
+        self.init_thetas = init_thetas
         self.theta_range = np.radians(np.array([[0, 0, 0], [180, 180, 180]]))
 
 
@@ -42,9 +49,9 @@ class Robot:
         self.thetas = np.zeros(3, dtype=np.float32)  # Joint angles in radians
         self.next_step = None
 
-        self.scale_factor = 0.5
+        self.scale_factor = 1
         
-        self._init_robot_param(L1, L2, L3, init_theta)  # Example link lengths
+        self._init_robot_param(L1, L2, L3, init_thetas)  # Example link lengths
 
 
         # state of robot
@@ -72,29 +79,27 @@ class Robot:
 
         # Store home configuration
         self.M = np.array([
-            [1, 0, 0, L2+L3],
+            [1, 0, 0, L2+self.x_offset],
             [0, 1, 0, 0],
-            [0, 0, 1, L1],
+            [0, 0, 1, L1-L3],
             [0, 0, 0, 1]
         ])
+
+        self.return_init_pos()
+
+    def return_init_pos(self):
+        sucess = self.read_state_from_robot()
+        if not sucess:
+            raise RuntimeError("Failed to read state from robot.")
         
-        
-        if not self.test_mode:
-            sucess = self.read_state_from_robot()
-            if not sucess:
-                raise RuntimeError("Failed to read state from robot.")
-            self.thetas = init_theta
-            thetas_signal = np.rad2deg(init_theta)
-            thetas_signal = np.round(thetas_signal).astype(int)
-            print(f"Sending signal: {thetas_signal}")
-            self.ser.write(f"{thetas_signal[0]},{thetas_signal[1]},{thetas_signal[2]}\n".encode())
-            
-    
-        else:
-            self.thetas = np.deg2rad([90, 90 ,90])
+        thetas_signal = np.rad2deg(self.init_thetas)
+        thetas_signal = np.round(thetas_signal).astype(int)
+        print(f"Sending signal: {thetas_signal}")
+        self.ser.write(f"{thetas_signal[0]},{thetas_signal[1]},{thetas_signal[2]}\n".encode())
+        self.thetas = self.init_thetas
         self.state = self.forward_kinematics(thetas=self.thetas)
         print(f"Robot initialized at position: {self.state}")
-        
+
 
     def read_state_from_robot(self) -> bool:
         self.ser.write(b"0\n")  # Request current angles from Arduino
@@ -152,16 +157,16 @@ class Robot:
         return mr.FKinSpace(self.M, self.Slist, thetas)    
 
 
-    def inverse_kinematics(self, T_target, initial_guess=None, epsilon = 10000 , max_iter= 0.1):
-        if initial_guess is None:
-            initial_guess = np.zeros(3)
+    # def inverse_kinematics(self, T_target, initial_guess=None, epsilon = 10000 , max_iter= 0.1):
+    #     if initial_guess is None:
+    #         initial_guess = np.zeros(3)
         
-        thetas, success = mr.IKinSpace(self.Slist, self.M, T_target, initial_guess, epsilon, max_iter)
+    #     thetas, success = mr.IKinSpace(self.Slist, self.M, T_target, initial_guess, epsilon, max_iter)
 
-        if not success:
-            print("Warning: IK did not converge")
+    #     if not success:
+    #         print("Warning: IK did not converge")
 
-        return thetas,success
+    #     return thetas,success
 
     def closest_distance_node(self, points,corresponding_theta, proposed_pos):
         # Compute Euclidean distances
@@ -174,6 +179,31 @@ class Robot:
         closest_theta = corresponding_theta[closest_idx]
         
         return closest_point, closest_theta, closest_distance
+
+    def to_transformed_signal(self,thetas_list, previous_thetas):
+        """
+        Given a list of theta arrays and a reference (previous_thetas),
+        returns the transformed theta (with rounding and +90 on theta3) 
+        that is closest to previous_thetas.
+        """
+        previous_thetas = np.array(previous_thetas)
+        min_dist = float('inf')
+        best_thetas = None
+
+        for thetas in thetas_list:
+            # Step 1: Transform each theta
+            thetas_rounded = np.round(thetas).astype(int)
+            thetas_rounded[2] += 90
+
+            # Step 2: Compare to previous_thetas
+            dist = np.linalg.norm(thetas_rounded - previous_thetas)
+
+            if dist < min_dist:
+                min_dist = dist
+                best_thetas = thetas_rounded
+
+        return best_thetas
+
 
     def retry(self, action_idx):
         points, corresponding_theta = self.get_neghbour_positions(delta_deg=2)
@@ -220,16 +250,19 @@ class Robot:
         print(f"New node : {new_node}")
         print(f"actual theta : {closest_theta}")
         # thetas, success = self.inverse_kinematics(new_node, initial_guess=self.thetas)
-        try_thetas = self.inverse_kinematics_3d( closest_node[0], closest_node[1], closest_node[2], previous_thetas=None)
+        try_thetas = self.inverse_kinematics_3d( closest_node[0], closest_node[1], closest_node[2])
+        thetas_signal = self.to_transformed_signal(try_thetas, self.thetas)
+
+
         # if not success:
         #     raise RuntimeError()
 
         print(f"China your ass another inverse_kinematics : {try_thetas}")
+        print(f"China get the signal across : {thetas_signal}")
         thetas = np.deg2rad(closest_theta)
         success = True
         print(f"distance : {distance}")
         print(f"theta moving (in radian):{thetas}")
-        print(f"theta moving (in degree): {np.rad2deg(thetas)}")
         thetas_signal = np.rad2deg(thetas)
         thetas_signal = np.round(thetas_signal).astype(int)
         print(f"signal theta moving (in degree): {thetas_signal}")
@@ -240,99 +273,8 @@ class Robot:
         self.thetas = thetas
         self.state = self.forward_kinematics(thetas)
         self.next_step = self.get_neghbour_positions(delta_deg=1)
-        # plt.show()
+        print("=========================================================")
 
-        return success
-
-    def move(self, action_idx):
-
-        # depend on the action _idx find the idrection and proposed state =
-        # use IK to find the theta
-        # send theta to ardunio 
-        # ipdate the next step 
-        # update other 
-        direction_map = {
-            0: np.array([+1, 0, 0]),
-            1: np.array([0, +1, 0]),
-            2: np.array([0, 0, +1]),
-            3: np.array([-1, 0, 0]),
-            4: np.array([0, -1, 0]),
-            5: np.array([0, 0, -1]),
-            6: np.array([0, 0, 0])
-        }
-        print("===============================================")
-        print(f"current position :{self.state}")
-        print(f"current theta : {self.thetas} ")
-        # Save current state in case we need to revert
-        proposed_state  = self.state.copy()
-        # Apply scaled movement
-        proposed_state[0:3,3] += direction_map[action_idx] * self.scale_factor
-        print(f"proposed position :{proposed_state}")
-
-        if self.next_step is not None and len(self.next_step) > 0:
-            current_pos = proposed_state[0:3, 3]
-            next_points = np.array(self.next_step)
-
-            # Find the closest reachable next step
-            distances = np.linalg.norm(next_points - current_pos, axis=1)
-            closest_idx = np.argmin(distances)
-            closest_point = next_points[closest_idx]
-
-            # Set the desired state to this point
-            self.state[0:3, 3] = closest_point
-            print(f"Moving to closest reachable point from next_step: {closest_point}")
-
-            plt.figure()
-            plt.scatter(current_pos[0],current_pos[1] , current_pos[2] , c='green', s=50, label="Current Pose")
-            plt.scatter(next_points[:, 0], next_points[:, 1], next_points[:,2], c='red', s=20, label="Neighbors")
-            plt.title("Workspace with Neighbors Around Pose Near (0,0)")
-            plt.xlabel("X")
-            plt.ylabel("Y")
-            plt.axis("equal")
-            plt.grid(True)
-            plt.legend()
-            plt.show()
-
-
-        else:
-            # Fall back to naive direction movement
-            self.state[0:3, 3] = proposed_state[0:3, 3]
-            self.next_step = self.get_neghbour_positions(delta_deg=1)
-            print("No next_step list; moving by direction_map.")
-            return
-        
-        # Compute inverse kinematics
-        thetas, success = self.inverse_kinematics(self.state, initial_guess=self.theta)
-        print(f"Inverse kinematics result: {thetas}, success: {success}")
- 
-        if not success:
-            print(f"IK did not converge for position {self.state}. Reverting to previous state.")
-            return False
-   
-        thetas = np.rad2deg(thetas)  # Convert to degrees for Arduino
-        thetas = np.round(thetas).astype(int)
-
-        if not self.test_mode:
-            
-            print(f"Send theta: {thetas}")
-            self.ser.write(f"{thetas[0]},{thetas[1]},{thetas[2]}\n".encode())
-            self.next_step = self.get_neghbour_positions(delta_deg=1)
-
-        # Estimate forward kinematics based on thetas
-        self.estimated_state = self.forward_kinematics(thetas)
-
-        if self.test_mode:
-            # Update state as the position extracted from FK result
-            self.state = self.estimated_state
-        else:
-            # Read actual robot state from Arduino and update
-            time.sleep(0.1)  # Allow time for Arduino to process
-            self.read_state_from_robot()
-            self.actual_state = self.forward_kinematics(self.thetas)
-            self.state = self.actual_state
-            print(f"Current state: {self.state}")
-
-        time.sleep(0.3)  # Simulate delay
         return success
 
     def step(self, action ):
@@ -350,22 +292,24 @@ class Robot:
 
         return obs, success 
     
-    def inverse_kinematics_3d(self, x, y, z, previous_thetas=None):
+    def inverse_kinematics_3d(self, x, y, z):
         """
         Calculates inverse kinematics for a 3DOF arm:
         - Joint 1 rotates around Z-axis
         - Joints 2 & 3 act in YZ plane
         Returns the solution closest to previous_thetas if provided.
         """
-        L1, L2, L3 = self.L1, self.L2, self.L3 
+        x_offset , y_offset , z_offset = self.x_offset, self.y_offset , self.z_offset
+        L1,L2,L3 = self.L1, self.L2, self.L3
         # 1. θ1 = base rotation to reach (x, y)
         theta1 = np.arctan2(y, x)  # rotation around Z to reach y-axis
 
         # 2. Project the target onto the YZ plane by rotating into frame
-        y_proj = np.sqrt(x**2 + y**2)
+        y_proj = np.sqrt((x - x_offset)**2 + y**2)
         z_eff = z - L1  # offset for base height
-
+        
         # 3. Compute r for planar arm (in YZ)
+
         r = np.sqrt(y_proj**2 + z_eff**2)
 
         # Check reachability
@@ -391,30 +335,190 @@ class Robot:
         sol_up = np.array([theta1, theta2_up, theta3_up])
         sol_down = np.array([theta1, theta2_down, theta3_down])
 
-        return np.rad2deg(sol_up), np.rad2deg(sol_down)
+        sol_up_deg = np.rad2deg(sol_up)
+        sol_down_deg = np.rad2deg(sol_down)
+
+
+        return sol_up_deg, sol_down_deg
+
+ 
+
+    def capture_led_sequence(self, duration=4.0, interval=0.8, save_dir="led_captures"):
+        """
+        Captures camera frames for a duration to catch each LED lighting up.
+
+        :param duration: Total capture time in seconds (default 4.0s)
+        :param interval: Time between frames (default 0.2s = 200 ms)
+        :param save_dir: Directory to save the captured images
+        """
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+        start_time = time.time()
+        count = 0
+
+        while (time.time() - start_time) < duration:
+            frame = self.camera_cap()
+            if frame is not None:
+                filename = os.path.join(save_dir, f"frame_{count:03d}.jpg")
+                cv2.imwrite(filename, frame)
+                print(f"Saved: {filename}")
+                count += 1
+            else:
+                print("No frame captured.")
+            time.sleep(interval)
+        
+        print(f"Captured {count} frames over {duration:.1f}s.")
+
+
 
     def reset(self):
         # Initialize the robot's position to the initial position
-        self.state = np.array(self.init_position, dtype=np.float32)
-        print(f"Robot initialized at position: {self.state}")
+        self.return_init_pos()
+        self.capture_led_sequence()
+
+    def capture_led_sequence(self, duration=4.0, interval=0.1, save_dir="led_captures"):
+        """
+        Captures camera frames for a duration to catch each LED lighting up.
+
+        :param duration: Total capture time in seconds (default 4.0s)
+        :param interval: Time between frames (default 0.2s = 200 ms)
+        :param save_dir: Directory to save the captured images
+        """
+
+
+        start_time = time.time()
+        frames = []
+        while (time.time() - start_time) < duration:
+            
+            frame_each ,frame_time  = self.camera_cap()
+            print(f"this frame takes")
+            if frame_each is not None:
+                frames.append(frame_each)
+                print(f"Capture")
+            else:
+                print("No frame captured.")
+            
+            time.sleep(interval-frame_time)
+
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+        for idx,frame in enumerate(frames):
+            filename = os.path.join(save_dir, f"frame_{idx:03d}.jpg")
+            cv2.imwrite(filename, frame)
+            print(f"Saved: {filename}")
+    
+        print(f"Captured {len(frames)} frames over {duration:.1f}s.")
+
 
     def camera_cap(self):
         try:
-            response = requests.get(self.url, stream=True, timeout=5)
-            if response.status_code == 200:
-                img_array = np.asarray(bytearray(response.content), dtype=np.uint8)
-                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-                if img is not None:
-                    return img
-                else:
-                    print("Failed to decode image")
-                    return None
+            start_time = time.time()
+            ret, frame = self.cap.read()
+            time_takes = time.time() - start_time
+
+            if ret and frame is not None:
+                return frame, time_takes
             else:
-                print(f"Error: Status code {response.status_code}")
-                return None
+                print("Failed to capture frame from VideoCapture.")
+                return None, 0
         except Exception as e:
             print(f"Exception during image capture: {e}")
-            return None
+            return None, 0
+
+
+    
+    # def move(self, action_idx):
+
+    #     # depend on the action _idx find the idrection and proposed state =
+    #     # use IK to find the theta
+    #     # send theta to ardunio 
+    #     # ipdate the next step 
+    #     # update other 
+    #     direction_map = {
+    #         0: np.array([+1, 0, 0]),
+    #         1: np.array([0, +1, 0]),
+    #         2: np.array([0, 0, +1]),
+    #         3: np.array([-1, 0, 0]),
+    #         4: np.array([0, -1, 0]),
+    #         5: np.array([0, 0, -1]),
+    #         6: np.array([0, 0, 0])
+    #     }
+    #     print("===============================================")
+    #     print(f"current position :{self.state}")
+    #     print(f"current theta : {self.thetas} ")
+    #     # Save current state in case we need to revert
+    #     proposed_state  = self.state.copy()
+    #     # Apply scaled movement
+    #     proposed_state[0:3,3] += direction_map[action_idx] * self.scale_factor
+    #     print(f"proposed position :{proposed_state}")
+
+    #     if self.next_step is not None and len(self.next_step) > 0:
+    #         current_pos = proposed_state[0:3, 3]
+    #         next_points = np.array(self.next_step)
+
+    #         # Find the closest reachable next step
+    #         distances = np.linalg.norm(next_points - current_pos, axis=1)
+    #         closest_idx = np.argmin(distances)
+    #         closest_point = next_points[closest_idx]
+
+    #         # Set the desired state to this point
+    #         self.state[0:3, 3] = closest_point
+    #         print(f"Moving to closest reachable point from next_step: {closest_point}")
+
+    #         plt.figure()
+    #         plt.scatter(current_pos[0],current_pos[1] , current_pos[2] , c='green', s=50, label="Current Pose")
+    #         plt.scatter(next_points[:, 0], next_points[:, 1], next_points[:,2], c='red', s=20, label="Neighbors")
+    #         plt.title("Workspace with Neighbors Around Pose Near (0,0)")
+    #         plt.xlabel("X")
+    #         plt.ylabel("Y")
+    #         plt.axis("equal")
+    #         plt.grid(True)
+    #         plt.legend()
+    #         plt.show()
+
+
+    #     else:
+    #         # Fall back to naive direction movement
+    #         self.state[0:3, 3] = proposed_state[0:3, 3]
+    #         self.next_step = self.get_neghbour_positions(delta_deg=1)
+    #         print("No next_step list; moving by direction_map.")
+    #         return
+        
+    #     # Compute inverse kinematics
+    #     thetas, success = self.inverse_kinematics(self.state, initial_guess=self.theta)
+    #     print(f"Inverse kinematics result: {thetas}, success: {success}")
+ 
+    #     if not success:
+    #         print(f"IK did not converge for position {self.state}. Reverting to previous state.")
+    #         return False
+   
+    #     thetas = np.rad2deg(thetas)  # Convert to degrees for Arduino
+    #     thetas = np.round(thetas).astype(int)
+
+    #     if not self.test_mode:
+            
+    #         print(f"Send theta: {thetas}")
+    #         self.ser.write(f"{thetas[0]},{thetas[1]},{thetas[2]}\n".encode())
+    #         self.next_step = self.get_neghbour_positions(delta_deg=1)
+
+    #     # Estimate forward kinematics based on thetas
+    #     self.estimated_state = self.forward_kinematics(thetas)
+
+    #     if self.test_mode:
+    #         # Update state as the position extracted from FK result
+    #         self.state = self.estimated_state
+    #     else:
+    #         # Read actual robot state from Arduino and update
+    #         time.sleep(0.1)  # Allow time for Arduino to process
+    #         self.read_state_from_robot()
+    #         self.actual_state = self.forward_kinematics(self.thetas)
+    #         self.state = self.actual_state
+    #         print(f"Current state: {self.state}")
+
+    #     time.sleep(0.3)  # Simulate delay
+    #     return success
 
 
     # def plot_robot(self, ax):
@@ -450,50 +554,48 @@ class Robot:
 
 if __name__ == "__main__":
 
-    robot = Robot(L1=6, L2=7, L3=7, serial_port='COM3', test_mode=False)
+    robot = Robot(L1=7.14, L2=7, L3=8.34 , x_offset=0.9185 , y_offset=0, z_offset=0, serial_port='COM3', test_mode=False)
     import keyboard
     import time
     import matplotlib.pyplot as plt
 
+        # try:
+    #     print("Use arrow keys to move, W/S for Z, Space to stop, ESC to exit.")
+    #     while True:
+    #         if keyboard.is_pressed("right"):
+    #             action = 0
+    #         elif keyboard.is_pressed("up"):
+    #             action = 1
+    #         elif keyboard.is_pressed("w"):
+    #             action = 2
+    #         elif keyboard.is_pressed("left"):
+    #             action = 3
+    #         elif keyboard.is_pressed("down"):
+    #             action = 4
+    #         elif keyboard.is_pressed("s"):
+    #             action = 5
+    #         elif keyboard.is_pressed("space"):
+    #             action = 6
+    #         elif keyboard.is_pressed("esc"):
+    #             print("\nExiting...")
+    #             break
+    #         else:
+    #             time.sleep(0.05)
+    #             continue
 
-
-    try:
-        print("Use arrow keys to move, W/S for Z, Space to stop, ESC to exit.")
-        while True:
-            if keyboard.is_pressed("right"):
-                action = 0
-            elif keyboard.is_pressed("up"):
-                action = 1
-            elif keyboard.is_pressed("w"):
-                action = 2
-            elif keyboard.is_pressed("left"):
-                action = 3
-            elif keyboard.is_pressed("down"):
-                action = 4
-            elif keyboard.is_pressed("s"):
-                action = 5
-            elif keyboard.is_pressed("space"):
-                action = 6
-            elif keyboard.is_pressed("esc"):
-                print("\nExiting...")
-                break
-            else:
-                time.sleep(0.05)
-                continue
-
-            success = robot.retry(action)
-            if success:
-                print(f"Action {action} executed successfully.")
-                print("New position:", robot.state)
+    #         success = robot.retry(action)
+    #         if success:
+    #             print(f"Action {action} executed successfully.")
+    #             print("New position:", robot.state)
                
-            else:
-                print(f"Action {action} failed.")
+    #         else:
+    #             print(f"Action {action} failed.")
 
-            # robot.plot_robot(ax)
-            time.sleep(0.1)
+    #         # robot.plot_robot(ax)
+    #         time.sleep(0.1)
 
-    except KeyboardInterrupt:
-        print("\nInterrupted. Exiting...")
+    # except KeyboardInterrupt:
+    #     print("\nInterrupted. Exiting...")
 
    
     # print("done ")

@@ -3,6 +3,8 @@ from gymnasium import spaces
 import serial
 import numpy as np
 import time
+from Robot import Robot
+from game import Game
 # import pyzed.sl as sl
 
 
@@ -11,11 +13,10 @@ class RobotEnv(gym.Env):
     
     def __init__(
             self,
-            robot_model,
-            game_model,
+            robot_model : Robot,
+            game_model : Game,
             num_colors,
-            num_lights,
-            time_limit,
+            num_lights
         ):
         H = 720
         W = 1280 * 2
@@ -30,7 +31,7 @@ class RobotEnv(gym.Env):
         # Observation space ( 0 : no light , 1 : red , 2 : green , 3 : blue)
         self.num_colors = num_colors 
         self.num_lights = num_lights
-        low , high = self.robot_model.get_range()
+     
         self.observation_space = spaces.Dict({
             "camera1": spaces.Box(low=0, high=255, shape=(3, 64, 64), dtype=np.uint8),
             "camera2": spaces.Box(low=0, high=255, shape=(3, 64, 64), dtype=np.uint8),
@@ -38,8 +39,6 @@ class RobotEnv(gym.Env):
             "robot_state": spaces.Box(low=-1, high=1, shape=(3,), dtype=np.float32)
         })
 
-
-        self.time_limit = time_limit
         self.max_steps = 1000  # Maximum number of steps per episode
 
         # Camera
@@ -107,15 +106,15 @@ class RobotEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
-        self.robot_position = self.robot_model.reset()
-        self.current_sequence = [np.random.randint(1, self.num_colors) for _ in range(self.num_lights)]
-        self.steps = 0
-        self.current_time = time.time()
-        self.reward = 0.0
-        
+       
         # send the current sequence to hardware
-        self.game.reset()
-
+        self.current_sequence = [0, 1, 2 ,3]
+        self.steps = 0
+        self.reward = 0.0
+        if  self.game.connected & self.game.active == False:
+            game.reset(self.current_sequence)
+        self.robot_position = self.robot_model.reset()
+        
 
         return self._get_obs(), {}
 
@@ -133,7 +132,7 @@ class RobotEnv(gym.Env):
         #     combined = np.hstack((left_image_np, right_image_np)).astype(np.uint8)
 
         return {
-            "position": np.array(self.robot_model.position, dtype=np.int32),
+            "position": np.array(self.robot_model.state, dtype=np.int32),
             "zed_image": combined  # ✅ include image
         }
 
@@ -150,7 +149,7 @@ class RobotEnv(gym.Env):
         # reward function 
         reward, terminated = self._compute_reward(player_sequence, sequence)
 
-        terminated = terminated or (self.steps >= self.max_steps) or (self.time_limit < self.currenttime - time.time())    
+        terminated = terminated or (self.steps >= self.max_steps)
 
 
         info = {
@@ -171,26 +170,29 @@ class RobotEnv(gym.Env):
 if __name__ == "__main__":
     from game import Game
     from Robot import Robot
+    
+    # Your ESP32 WebSocket port
+    url = f"ws://192.168.0.100:81"
 
-    game = Game(url="ws://localhost:8080", sequence_length=4)  # Example URL and sequence length
-    #serial_port="/dev/ttyUSB0", baud_rate=9600
-    robot_model = Robot()  # Example serial port and baud rate
-     # Example usage - replace ... with actual robot_model and game_model instances
+    game = Game(url, sequence_length=4)
+
+    robot_model = Robot(L1=7.14, L2=7, L3=8.34 , x_offset=0.9185 , y_offset=0, z_offset=0, serial_port='COM3', test_mode=False)
+    
+    # # Example usage - replace ... with actual robot_model and game_model instances
     env = RobotEnv(
         robot_model= robot_model,
         game_model= game,
         num_colors=4,
         num_lights=4,
-        time_limit=60
     )
 
     obs, info = env.reset()
-    action = env.action_space.sample()
-    print("Initial Action:", action)
-    obs, reward, terminated, truncated, info = env.step(action)
+    # action = env.action_space.sample()
+    # print("Initial Action:", action)
+    # obs, reward, terminated, truncated, info = env.step(action)
 
-    print("Observation keys:", obs.keys())
-    print("Reward:", reward)
-    print("Terminated:", terminated)
-    print("Truncated:", truncated)
-    print("Info:", info)
+    # print("Observation keys:", obs.keys())
+    # print("Reward:", reward)
+    # print("Terminated:", terminated)
+    # print("Truncated:", truncated)
+    # print("Info:", info)

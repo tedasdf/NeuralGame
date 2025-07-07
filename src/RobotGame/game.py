@@ -25,7 +25,10 @@ class Game:
             on_open=lambda ws: self.on_open(ws),
             on_error=lambda ws, err: self.on_error(ws, err),
             on_close=lambda ws: self.on_close(ws)
-        )
+        )   
+
+        self.start_seq()
+        
 
     def start_seq(self):
         # Start WebSocket listener in a separate thread
@@ -35,25 +38,27 @@ class Game:
         # Wait until connected (max wait time: 5 seconds)
         timeout = 5
         waited = 0
-        while not game.connected and waited < timeout:
+        while not self.connected and waited < timeout:
             print("Waiting for WebSocket connection...")
             time.sleep(1)
             waited += 1
 
-    def reset(self):
+    def reset(self, new_sequence):
         self.sequence = []
         self.player_sequence = []
         self.active = False
         self.starttime = None
         print("Game reset.")
 
-        self.beginning_seq()
+        self.beginning_seq(new_sequence)
+        
 
-    def beginning_seq(self):
-        self.sequence = random.sample(range(self.num_sequences), self.num_sequences)
+    def beginning_seq(self, new_sequence):
+        self.sequence = new_sequence
         self.player_progress = 0
         self.active = True
-        print(f"Generated sequence: {self.sequence}")
+        print(f"Generated sequence: {new_sequence}")
+        self.ws.send(json.dumps({"command": "begin" , "seq" : new_sequence}))
         
 
     def check_sequence(self):
@@ -75,6 +80,7 @@ class Game:
 
                 return "Incorrect"
 
+    
 
     def on_message(self, ws, message):
         print(f"Received from ESP32: {message}")
@@ -97,8 +103,9 @@ class Game:
     def on_open(self,ws):
         print("Connected to ESP32 WebSocket server.")
         self.connected = True
-        seq = self.beginning_seq()
-        self.ws.send(json.dumps({"command": "begin" , "seq" : seq}))
+        # seq = [ 2, 1, 0 ,3]
+        # seq = self.beginning_seq(seq)
+        # self.ws.send(json.dumps({"command": "begin" , "seq" : seq}))
 
     def on_error(self, ws, error):
         print(f"WebSocket error: {error}")
@@ -122,32 +129,33 @@ if __name__ == "__main__":
     PORT = 81                   # Your ESP32 WebSocket port
     url = f"ws://{ESP32_IP}:{PORT}"
 
-    game = Game(url)
+    game = Game(url, sequence_length=4)
 
     # Start WebSocket listening thread
-    game.start_seq()
+    sequence = [ 3, 2, 0 ,1]
+
+    if  game.connected & game.active == False:
+        game.reset(sequence)
+    time.sleep(1)
+    # if game.connected:
+    #     print("WebSocket connected successfully!")
+    #     # You can now interact here (you could add input() to send custom commands)
+    #     while True:
+    #         if game.active == False:
+    #             game.reset(sequence)
+    #         print(game.player_sequence)
+    #         print(game.sequence)
+    #         print(game.check_sequence())
+    #         time.sleep(1)
+    #         # if game.player_sequence !== prev_sequence :
+    #         #     print(game.player_sequence)
 
 
-
-    if game.connected:
-        print("WebSocket connected successfully!")
-        # You can now interact here (you could add input() to send custom commands)
-        while True:
-            if game.active == False:
-                game.reset()
-            print(game.player_sequence)
-            print(game.sequence)
-            print(game.check_sequence())
-            time.sleep(1)
-            # if game.player_sequence !== prev_sequence :
-            #     print(game.player_sequence)
-
-
-            # prev_sequence = game.player_sequence        
+    #         # prev_sequence = game.player_sequence        
             
 
-    else:
-        print("WebSocket not connected.")
+    # else:
+    #     print("WebSocket not connected.")
 
 
 

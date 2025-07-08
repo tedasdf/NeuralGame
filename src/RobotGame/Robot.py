@@ -24,8 +24,6 @@ class Robot:
 
         
         # connect to camera
-        self.cap = cv2.VideoCapture("rtsp://192.168.0.102:554/mjpeg/1")
-        # self.url = "http://192.168.0.102/capture"
         if not self.test_mode:
             # ceonnect to arduino
             self.ser = serial.Serial(serial_port, 9600, timeout=1, write_timeout=1)
@@ -49,14 +47,14 @@ class Robot:
         self.thetas = np.zeros(3, dtype=np.float32)  # Joint angles in radians
         self.next_step = None
 
-        self.scale_factor = 1
+        self.scale_factor = 0.5
         
-        self._init_robot_param(L1, L2, L3, init_thetas)  # Example link lengths
+        self._init_robot_param(L1, L2, L3)  # Example link lengths
 
 
         # state of robot
 
-    def _init_robot_param(self, L1, L2 ,L3, init_theta):
+    def _init_robot_param(self, L1, L2 ,L3):
 
         # Define joint axes and locations
         w1 = np.array([0, 0, 1])
@@ -64,7 +62,7 @@ class Robot:
         v1 = -np.cross(w1, q1)
 
         w2 = np.array([0, -1, 0])
-        q2 = np.array([0, 0, L1])
+        q2 = np.array([self.x_offset, 0, L1])
         v2 = -np.cross(w2, q2)
 
         w3 = np.array([0, 1, 0])
@@ -250,7 +248,7 @@ class Robot:
         print(f"New node : {new_node}")
         print(f"actual theta : {closest_theta}")
         # thetas, success = self.inverse_kinematics(new_node, initial_guess=self.thetas)
-        try_thetas = self.inverse_kinematics_3d( closest_node[0], closest_node[1], closest_node[2])
+        try_thetas = self.inverse_kinematics_3d( proposed_pos[0], proposed_pos[1], proposed_pos[2])
         thetas_signal = self.to_transformed_signal(try_thetas, self.thetas)
 
 
@@ -263,8 +261,7 @@ class Robot:
         success = True
         print(f"distance : {distance}")
         print(f"theta moving (in radian):{thetas}")
-        thetas_signal = np.rad2deg(thetas)
-        thetas_signal = np.round(thetas_signal).astype(int)
+        thetas_signal = thetas_signal
         print(f"signal theta moving (in degree): {thetas_signal}")
         self.ser.write(f"{thetas_signal[0]},{thetas_signal[1]},{thetas_signal[2]}\n".encode())
         print(f"Succes: {success}")
@@ -305,7 +302,7 @@ class Robot:
         theta1 = np.arctan2(y, x)  # rotation around Z to reach y-axis
 
         # 2. Project the target onto the YZ plane by rotating into frame
-        y_proj = np.sqrt((x - x_offset)**2 + y**2)
+        y_proj = np.sqrt((x)**2 + y**2) - x_offset
         z_eff = z - L1  # offset for base height
         
         # 3. Compute r for planar arm (in YZ)
@@ -343,89 +340,89 @@ class Robot:
 
  
 
-    def capture_led_sequence(self, duration=4.0, interval=0.8, save_dir="led_captures"):
-        """
-        Captures camera frames for a duration to catch each LED lighting up.
+    # def capture_led_sequence(self, duration=4.0, interval=0.8, save_dir="led_captures"):
+    #     """
+    #     Captures camera frames for a duration to catch each LED lighting up.
 
-        :param duration: Total capture time in seconds (default 4.0s)
-        :param interval: Time between frames (default 0.2s = 200 ms)
-        :param save_dir: Directory to save the captured images
-        """
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
+    #     :param duration: Total capture time in seconds (default 4.0s)
+    #     :param interval: Time between frames (default 0.2s = 200 ms)
+    #     :param save_dir: Directory to save the captured images
+    #     """
+    #     if not os.path.exists(save_dir):
+    #         os.makedirs(save_dir)
 
-        start_time = time.time()
-        count = 0
+    #     start_time = time.time()
+    #     count = 0
 
-        while (time.time() - start_time) < duration:
-            frame = self.camera_cap()
-            if frame is not None:
-                filename = os.path.join(save_dir, f"frame_{count:03d}.jpg")
-                cv2.imwrite(filename, frame)
-                print(f"Saved: {filename}")
-                count += 1
-            else:
-                print("No frame captured.")
-            time.sleep(interval)
+    #     while (time.time() - start_time) < duration:
+    #         frame = self.camera_cap()
+    #         if frame is not None:
+    #             filename = os.path.join(save_dir, f"frame_{count:03d}.jpg")
+    #             cv2.imwrite(filename, frame)
+    #             print(f"Saved: {filename}")
+    #             count += 1
+    #         else:
+    #             print("No frame captured.")
+    #         time.sleep(interval)
         
-        print(f"Captured {count} frames over {duration:.1f}s.")
+    #     print(f"Captured {count} frames over {duration:.1f}s.")
 
 
 
     def reset(self):
         # Initialize the robot's position to the initial position
         self.return_init_pos()
-        self.capture_led_sequence()
+        # self.capture_led_sequence()
 
-    def capture_led_sequence(self, duration=4.0, interval=0.1, save_dir="led_captures"):
-        """
-        Captures camera frames for a duration to catch each LED lighting up.
+    # def capture_led_sequence(self, duration=4.0, interval=0.1, save_dir="led_captures"):
+    #     """
+    #     Captures camera frames for a duration to catch each LED lighting up.
 
-        :param duration: Total capture time in seconds (default 4.0s)
-        :param interval: Time between frames (default 0.2s = 200 ms)
-        :param save_dir: Directory to save the captured images
-        """
+    #     :param duration: Total capture time in seconds (default 4.0s)
+    #     :param interval: Time between frames (default 0.2s = 200 ms)
+    #     :param save_dir: Directory to save the captured images
+    #     """
 
 
-        start_time = time.time()
-        frames = []
-        while (time.time() - start_time) < duration:
+    #     start_time = time.time()
+    #     frames = []
+    #     while (time.time() - start_time) < duration:
             
-            frame_each ,frame_time  = self.camera_cap()
-            print(f"this frame takes")
-            if frame_each is not None:
-                frames.append(frame_each)
-                print(f"Capture")
-            else:
-                print("No frame captured.")
+    #         frame_each ,frame_time  = self.camera_cap()
+    #         print(f"this frame takes")
+    #         if frame_each is not None:
+    #             frames.append(frame_each)
+    #             print(f"Capture")
+    #         else:
+    #             print("No frame captured.")
             
-            time.sleep(interval-frame_time)
+    #         time.sleep(interval-frame_time)
 
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
+    #     if not os.path.exists(save_dir):
+    #         os.makedirs(save_dir)
 
-        for idx,frame in enumerate(frames):
-            filename = os.path.join(save_dir, f"frame_{idx:03d}.jpg")
-            cv2.imwrite(filename, frame)
-            print(f"Saved: {filename}")
+    #     for idx,frame in enumerate(frames):
+    #         filename = os.path.join(save_dir, f"frame_{idx:03d}.jpg")
+    #         cv2.imwrite(filename, frame)
+    #         print(f"Saved: {filename}")
     
-        print(f"Captured {len(frames)} frames over {duration:.1f}s.")
+    #     print(f"Captured {len(frames)} frames over {duration:.1f}s.")
 
 
-    def camera_cap(self):
-        try:
-            start_time = time.time()
-            ret, frame = self.cap.read()
-            time_takes = time.time() - start_time
+    # def camera_cap(self):
+    #     try:
+    #         start_time = time.time()
+    #         ret, frame = self.cap.read()
+    #         time_takes = time.time() - start_time
 
-            if ret and frame is not None:
-                return frame, time_takes
-            else:
-                print("Failed to capture frame from VideoCapture.")
-                return None, 0
-        except Exception as e:
-            print(f"Exception during image capture: {e}")
-            return None, 0
+    #         if ret and frame is not None:
+    #             return frame, time_takes
+    #         else:
+    #             print("Failed to capture frame from VideoCapture.")
+    #             return None, 0
+    #     except Exception as e:
+    #         print(f"Exception during image capture: {e}")
+    #         return None, 0
 
 
     
@@ -555,47 +552,59 @@ class Robot:
 if __name__ == "__main__":
 
     robot = Robot(L1=7.14, L2=7, L3=8.34 , x_offset=0.9185 , y_offset=0, z_offset=0, serial_port='COM3', test_mode=False)
-    import keyboard
+    from pynput import keyboard
     import time
-    import matplotlib.pyplot as plt
 
-        # try:
-    #     print("Use arrow keys to move, W/S for Z, Space to stop, ESC to exit.")
-    #     while True:
-    #         if keyboard.is_pressed("right"):
-    #             action = 0
-    #         elif keyboard.is_pressed("up"):
-    #             action = 1
-    #         elif keyboard.is_pressed("w"):
-    #             action = 2
-    #         elif keyboard.is_pressed("left"):
-    #             action = 3
-    #         elif keyboard.is_pressed("down"):
-    #             action = 4
-    #         elif keyboard.is_pressed("s"):
-    #             action = 5
-    #         elif keyboard.is_pressed("space"):
-    #             action = 6
-    #         elif keyboard.is_pressed("esc"):
-    #             print("\nExiting...")
-    #             break
-    #         else:
-    #             time.sleep(0.05)
-    #             continue
+    current_key = None
 
-    #         success = robot.retry(action)
-    #         if success:
-    #             print(f"Action {action} executed successfully.")
-    #             print("New position:", robot.state)
-               
-    #         else:
-    #             print(f"Action {action} failed.")
+    def on_press(key):
+        global current_key
+        try:
+            k = key.char
+        except AttributeError:
+            k = key.name  # For arrow keys, esc, space, etc.
+        current_key = k
 
-    #         # robot.plot_robot(ax)
-    #         time.sleep(0.1)
+    def on_release(key):
+        global current_key
+        current_key = None
+        if key == keyboard.Key.esc:
+            print("\nExiting...")
+            return False  # This will stop the listener
 
-    # except KeyboardInterrupt:
-    #     print("\nInterrupted. Exiting...")
+    print("Use arrow keys to move, W/S for Z, Space to stop, ESC to exit.")
+
+    listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+    listener.start()
+
+    while listener.running:
+        action = None
+
+        if current_key == "right":
+            action = 0
+        elif current_key == "up":
+            action = 1
+        elif current_key == "w":
+            action = 2
+        elif current_key == "left":
+            action = 3
+        elif current_key == "down":
+            action = 4
+        elif current_key == "s":
+            action = 5
+        elif current_key == "space":
+            action = 6
+
+        if action is not None:
+            success = robot.retry(action)
+            if success:
+                print(f"Action {action} executed successfully.")
+                print("New position:", robot.state)
+            else:
+                print(f"Action {action} failed.")
+            time.sleep(0.2)  # avoid spamming the same key
+        else:
+            time.sleep(0.05)
 
    
     # print("done ")

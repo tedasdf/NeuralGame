@@ -1,11 +1,11 @@
 import gymnasium as gym
 from gymnasium import spaces
-import serial
 import numpy as np
-import time
 from Robot import Robot
 from game import Game
 # import pyzed.sl as sl
+from stable_baselines3 import SAC
+from stable_baselines3.common.env_checker import check_env
 
 
 
@@ -26,6 +26,8 @@ class RobotEnv(gym.Env):
         self.robot_model = robot_model
         self.game = game_model
         self.num_actions = self.robot_model.num_actions
+
+
         self.action_space = spaces.Discrete(self.num_actions)
 
         # Observation space ( 0 : no light , 1 : red , 2 : green , 3 : blue)
@@ -34,9 +36,7 @@ class RobotEnv(gym.Env):
      
         self.observation_space = spaces.Dict({
             "camera1": spaces.Box(low=0, high=255, shape=(3, 64, 64), dtype=np.uint8),
-            "camera2": spaces.Box(low=0, high=255, shape=(3, 64, 64), dtype=np.uint8),
-            "armcamera": spaces.Box(low=0, high=255, shape=(3, 64, 64), dtype=np.uint8),
-            "robot_state": spaces.Box(low=-1, high=1, shape=(3,), dtype=np.float32)
+            "robot_state": spaces.Box(low=-5, high=15, shape=(3,), dtype=np.float32)
         })
 
         self.max_steps = 1000  # Maximum number of steps per episode
@@ -72,7 +72,7 @@ class RobotEnv(gym.Env):
     #         print(f"Error opening camera: {status}")
     #         exit(1)
     #     print("Camera opened successfully.")
-
+    
 
     def _compute_reward(self, player_sequence, target_sequence):
         reward = 0.0
@@ -105,18 +105,24 @@ class RobotEnv(gym.Env):
     # required function for stable baselines 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-
        
         # send the current sequence to hardware
         self.current_sequence = [0, 1, 2 ,3]
         self.steps = 0
         self.reward = 0.0
         if  self.game.connected & self.game.active == False:
-            game.reset(self.current_sequence)
-        self.robot_position = self.robot_model.reset()
-        
+            self.game.reset(self.current_sequence)
 
-        return self._get_obs(), {}
+        self.robot_position = self.robot_model.reset()
+
+        info = {
+            "robot_position": self.robot_model.state[0:3,3],
+            "expected_sequence": self.game.sequence,
+            "player_sequence": self.game.player_sequence,
+            "steps": self.steps
+        }
+
+        return self._get_obs() , info
 
     # required function for stable baselines
     def _get_obs(self):
@@ -132,16 +138,18 @@ class RobotEnv(gym.Env):
         #     combined = np.hstack((left_image_np, right_image_np)).astype(np.uint8)
 
         return {
-            "position": np.array(self.robot_model.state, dtype=np.int32),
-            "zed_image": combined  # ✅ include image
+            "camera1": spaces.Box(low=0, high=255, shape=(3, 64, 64), dtype=np.uint8),
+            "robot_state": np.array(self.robot_model.state[0:3, 3], dtype=np.int32),
         }
 
     # required function for stable baselines
     def step(self, action):
         self.steps += 1
 
-        arm_obs , valid  = self.robot_model.step(action)        
-
+        valid  = self.robot_model.step(action)        
+        if not valid:
+            return
+        
         # Reward , terminated logic 
         sequence = self.game_model.sequence()
         player_sequence = self.game_model.player_sequence
@@ -153,9 +161,9 @@ class RobotEnv(gym.Env):
 
 
         info = {
-            "robot_position": self.robot_position,
+            "robot_position": self.robot_model.state[0:3,3],
             "expected_sequence": self.game.sequence,
-            "player_"
+            "player_sequence": self.game.player_sequence,
             "steps": self.steps
         }
 
@@ -179,20 +187,22 @@ if __name__ == "__main__":
     robot_model = Robot(L1=7.14, L2=7, L3=8.34 , x_offset=0.9185 , y_offset=0, z_offset=0, serial_port='COM3', test_mode=False)
     
     # # Example usage - replace ... with actual robot_model and game_model instances
-    env = RobotEnv(
-        robot_model= robot_model,
-        game_model= game,
-        num_colors=4,
-        num_lights=4,
-    )
+    env = RobotEnv(robot_model= robot_model,game_model= game,num_colors=4,num_lights=4)
 
-    obs, info = env.reset()
-    # action = env.action_space.sample()
-    # print("Initial Action:", action)
-    # obs, reward, terminated, truncated, info = env.step(action)
+    check_env(env)
 
-    # print("Observation keys:", obs.keys())
-    # print("Reward:", reward)
-    # print("Terminated:", terminated)
-    # print("Truncated:", truncated)
-    # print("Info:", info)
+    # obs, info = env.reset()
+    # # action = env.action_space.sample()
+    # # print("Initial Action:", action)
+    # # obs, reward, terminated, truncated, info = env.step(action)
+
+    # # print("Observation keys:", obs.keys())
+    # # print("Reward:", reward)
+    # # print("Terminated:", terminated)
+    # # print("Truncated:", truncated)
+    # # print("Info:", info)
+
+
+    # for i in range(10):
+    #     obs ,  =  env.step()
+

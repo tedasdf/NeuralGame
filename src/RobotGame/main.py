@@ -5,13 +5,9 @@ import json
 import logging
 import torch
 import wandb
-from stable_baselines3 import SAC
-import pika
-import redis
+from stable_baselines3 import PPO
 import zstandard as zstd
 from PIL import Image
-from redis.retry import Retry
-from redis.backoff import ExponentialBackoff
 from stable_baselines3.common.callbacks import BaseCallback
 from typing import Any, List
 from pydantic import BaseModel
@@ -40,6 +36,7 @@ class DataCollectorCallback(BaseCallback):
         self.episode_keys_buffer = []
         self.frames_buffer = []
         self.actions_buffer = []
+        self.state_buffer = [] 
         self.max_batch_size = 500 * 1024 * 1024  # 500 MB
 
 
@@ -74,7 +71,8 @@ class DataCollectorCallback(BaseCallback):
         """Estimate current buffer size in bytes."""
         frame_size = sum(frame.nbytes for frame in self.frames_buffer)
         action_size = sum(sys.getsizeof(action) for action in self.actions_buffer)
-        return frame_size + action_size
+        state_size = sum(state.nbytes for state in self.state_buffer)
+        return frame_size + action_size + state_size
 
     def _save_frames_locally(self, episode):
         """Save frames as PNG locally."""
@@ -90,7 +88,7 @@ class DataCollectorCallback(BaseCallback):
         """Clear the in-memory frame and action buffers."""
         self.frames_buffer.clear()
         self.actions_buffer.clear()
-
+        self.state_buffer.clear()
 
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [])
@@ -116,6 +114,7 @@ class DataCollectorCallback(BaseCallback):
             if done:
                 logging.info(f"Episode {episode_idx} done, saving remaining buffer immediately.")
                 if self.save_locally:
+
                     self._save_frames_locally(episode_idx)
                 if self.enable_rmq:
                     self._save_data_to_redis(episode_idx)
@@ -165,44 +164,61 @@ if __name__ == "__main__":
     import cv2
     from stable_baselines3 import SAC
     from stable_baselines3.sac.policies import SACPolicy
-    from MultiCamFeatureExtractor import MultiCamFeatureExtractor
+    from MultiCamFeatureExtractor import CustomFeatureExtractor
     from game import Game
     import gymnasium as gym
     import time
     import os
     import logging
 
-    game_model = Game(
-        url="ws://localhost:8080",  # Example URL, adjust as necessary 
-        sequence_length=4  # Example sequence length
+    wandb.init(
+        project="robot-sac-training",
+        entity="tedlosingyau-monash-university",
+        name="run_001",
+        config={
+            "algorithm": "SAC",
+            "total_timesteps": 100_000,
+            "features_dim": 256
+        },
+        sync_tensorboard=True,
+        monitor_gym=False,
+        save_code=True,
     )
 
-    robot_model = Robot(
-        L1 = 6,
-        L2 = 7, 
-        L3 = 7, 
-        serial_port='COM3',
-        init_position=(0, 0 , 0), # not yet set
-        test_mode=False
-    )
+    env = gym.make("CartPole-v1", render_mode="rgb_array")
+    
+    # game_model = Game(
+    #     url="ws://localhost:8080",  # Example URL, adjust as necessary 
+    #     sequence_length=4  # Example sequence length
+    # )
 
-    robot_env = RobotEnv(
-        robot_model,
-        game_model,
-        num_colors =4 ,
-        num_lights =4,
-        time_limit = 60, # 1 minute
-    )
+    # robot_model = Robot(
+    #     L1 = 6,
+    #     L2 = 7, 
+    #     L3 = 7, 
+    #     serial_port='COM3',
+    #     init_position=(0, 0 , 0), # not yet set
+    #     test_mode=False
+    # )
+
+    # robot_env = RobotEnv(
+    #     robot_model,
+    #     game_model,
+    #     num_colors =4 ,
+    #     num_lights =4,
+    #     time_limit = 60, # 1 minute
+    # )
 
     policy_kwargs = dict(
-        features_extractor_class=MultiCamFeatureExtractor,
+        features_extractor_class=CustomFeatureExtractor,
         features_extractor_kwargs=dict(features_dim=256),
     )
 
-    data_collector_cb = DataCollectorCallback( save_path="./models", enable_rmq=True, save_locally=True)
-    train_logger_cb = TrainLoggingCallback(save_freq=5000, save_path="./models")
+    # data_collector_cb = DataCollectorCallback( save_path="./models", enable_rmq=False, save_locally=True)
+    # train_logger_cb = TrainLoggingCallback(save_freq=5000, save_path="./models")
+    # wandb_cb = WandbCallback()
 
-    model = SAC("MlpPolicy", env, verbose=1)
-    model.learn(total_timesteps=100000, callback=[data_collector_cb, train_logger_cb])
+    model = PPO("MlpPolicy", env, policy_kwargs=policy_kwargs ,verbose=1)
+    model.learn(total_timesteps=100000)
 
   

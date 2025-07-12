@@ -50,16 +50,32 @@
 # # This code initializes a ZED camera, retrieves images from both left and right cameras, and displays them in real-time.
 
 import cv2
+import requests
+import numpy as np
+import cv2
+import time
 
-cap = cv2.VideoCapture("rtsp://192.168.0.102:554/mjpeg/1")
+def camera_cap_snapshot(self):
+    try:
+        start_time = time.time()
+        response = requests.get("http://192.168.0.102/snapshot", stream=True, timeout=3)
+        
+        if response.status_code == 200:
+            img_array = np.asarray(bytearray(response.content), dtype=np.uint8)
+            img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+            time_taken = time.time() - start_time
+            
+            if img is not None:
+                return img, time_taken
+            else:
+                print("Failed to decode image.")
+                return None, 0
+        else:
+            print(f"HTTP error: {response.status_code}")
+            return None, 0
+    except Exception as e:
+        print(f"Exception in snapshot capture: {e}")
+        return None, 0
 
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
-    cv2.imshow("ESP32-CAM", frame)
-    if cv2.waitKey(1) == 27:  # ESC to quit
-        break
 
-cap.release()
-cv2.destroyAllWindows()
+camera_cap_snapshot()

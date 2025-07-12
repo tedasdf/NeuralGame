@@ -41,13 +41,11 @@ class Robot:
         self.z_offset = z_offset
         self.init_thetas = init_thetas
         self.theta_range = np.radians(np.array([[0, 0, 0], [180, 180, 180]]))
-
+        self.scale_factor = 0.4
 
         self.state = np.zeros((4, 4), dtype=np.float32)  # Homogeneous transformation matrix
-        self.thetas = np.zeros(3, dtype=np.float32)  # Joint angles in radians
+        self.thetas = self.init_thetas  # Joint angles in radians
         self.next_step = None
-
-        self.scale_factor = 0.5
         
         self._init_robot_param(L1, L2, L3)  # Example link lengths
 
@@ -66,7 +64,7 @@ class Robot:
         v2 = -np.cross(w2, q2)
 
         w3 = np.array([0, 1, 0])
-        q3 = np.array([L2, 0, L1])
+        q3 = np.array([L2+self.x_offset, 0, L1])
         v3 = -np.cross(w3, q3)
 
         # Screw axes (6x3 matrix)
@@ -82,18 +80,23 @@ class Robot:
             [0, 0, 1, L1-L3],
             [0, 0, 0, 1]
         ])
-
+        print(self.Slist)
         self.return_init_pos()
 
     def return_init_pos(self):
-        sucess = self.read_state_from_robot()
-        if not sucess:
+        success = False
+        if not self.test_mode:
+           success = self.read_state_from_robot()
+        else:
+            success = True
+        if not success:
             raise RuntimeError("Failed to read state from robot.")
         
-        thetas_signal = np.rad2deg(self.init_thetas)
+        thetas_signal = np.rad2deg(self.thetas)
         thetas_signal = np.round(thetas_signal).astype(int)
         print(f"Sending signal: {thetas_signal}")
-        self.ser.write(f"{thetas_signal[0]},{thetas_signal[1]},{thetas_signal[2]}\n".encode())
+        if not self.test_mode:
+            self.ser.write(f"{thetas_signal[0]},{thetas_signal[1]},{thetas_signal[2]}\n".encode())
         self.thetas = self.init_thetas
         self.state = self.forward_kinematics(thetas=self.thetas)
         print(f"Robot initialized at position: {self.state}")
@@ -187,12 +190,13 @@ class Robot:
         previous_thetas = np.array(previous_thetas)
         min_dist = float('inf')
         best_thetas = None
-
+        print(thetas_list)
         for thetas in thetas_list:
             # Step 1: Transform each theta
             thetas_rounded = np.round(thetas).astype(int)
             thetas_rounded[2] += 90
-
+            
+            thetas_rounded[2] *= -1
             # Step 2: Compare to previous_thetas
             dist = np.linalg.norm(thetas_rounded - previous_thetas)
 
@@ -202,15 +206,57 @@ class Robot:
 
         return best_thetas
 
+    def velocity_sensitivity(self):
+        self.J = mr.JacobianSpace(self.Slist, self.thetas)
+        print("J",self.J)
+        dtheta = np.array([0.01745 * 10, 0.01745*10, 0.01745*10])  # rad/s
+
+        V = self.J @ dtheta
+        omega = V[0:3]  # angular velocity of end-effector (rad/s)
+        v = V[3:6]  
+        return omega, v 
+    
+    def final_solution(self, action_idx):
+        
+        direction_map = {
+            0: np.array([+1, 0, 0]),
+            1: np.array([0, +1, 0]),
+            2: np.array([0, 0, +1]),
+            3: np.array([-1, 0, 0]),
+            4: np.array([0, -1, 0]),
+            5: np.array([0, 0, -1]),
+            6: np.array([0, 0, 0])
+        }
+
+        omega , v = self.velocity_sensitivity()
+        print("v:",v)
+        proposed_translation = np.multiply(direction_map[action_idx] , v)
+        proposed_pos = self.state[0:3, 3] + proposed_translation
+        print(proposed_pos)
+        try_thetas , success =self.inverse_kinematics_3d( proposed_pos[0], proposed_pos[1], proposed_pos[2])
+        if not success:
+            return success
+        print("result from inverse kinematics:"  ,try_thetas)
+
+        thetas_signal = self.to_transformed_signal(try_thetas, self.thetas)
+
+        print("Thetas signal " ,thetas_signal)
+        if not self.test_mode:
+            self.ser.write(f"{thetas_signal[0]},{thetas_signal[1]},{thetas_signal[2]}\n".encode())
+
+        self.read_state_from_robot()
+        self.state = self.forward_kinematics(self.thetas)
+        return success
+    
 
     def retry(self, action_idx):
         points, corresponding_theta = self.get_neghbour_positions(delta_deg=2)
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
-        xs, ys, zs = points[:,0], points[:,1], points[:,2]
-        ax.scatter(xs, ys, zs, c='blue')
-        ax.scatter(self.state[0,3], self.state[1,3], self.state[2,3], c='green', label="current pos")
-        ax.set_title("±1° Joint Neighbor Workspace Region")
+        # fig = plt.figure()
+        # ax = fig.add_subplot(111, projection='3d')
+        # xs, ys, zs = points[:,0], points[:,1], points[:,2]
+        # ax.scatter(xs, ys, zs, c='blue')
+        # ax.scatter(self.state[0,3], self.state[1,3], self.state[2,3], c='green', label="current pos")
+        # ax.set_title("±1° Joint Neighbor Workspace Region")
 
 
         direction_map = {
@@ -226,29 +272,29 @@ class Robot:
         proposed_translation = direction_map[action_idx] * self.scale_factor
         proposed_pos = self.state[0:3, 3] + proposed_translation
         print(f"proposed position : {proposed_pos}")
-        ax.scatter(proposed_pos[0], proposed_pos[1], proposed_pos[2],
-               c='red', s=50, label="Proposed Translation")
+        # ax.scatter(proposed_pos[0], proposed_pos[1], proposed_pos[2],
+        #        c='red', s=50, label="Proposed Translation")
     
         closest_node , closest_theta, distance = self.closest_distance_node(points,corresponding_theta, proposed_pos)
-        ax.scatter(closest_node[0], closest_node[1], closest_node[2],
-               c='magenta', s=70, label="Closest Node", marker='^')
-        # Final touches
-        ax.set_title("±1° Joint Neighbor Workspace Region")
-        ax.set_xlabel("X")
-        ax.set_ylabel("Y")
-        ax.set_zlabel("Z")
-        # Set custom 3D axis limits
+        # ax.scatter(closest_node[0], closest_node[1], closest_node[2],
+        #        c='magenta', s=70, label="Closest Node", marker='^')
+        # # Final touches
+        # ax.set_title("±1° Joint Neighbor Workspace Region")
+        # ax.set_xlabel("X")
+        # ax.set_ylabel("Y")
+        # ax.set_zlabel("Z")
+        # # Set custom 3D axis limits
         
-        ax.legend()
-        ax.grid(True)
+        # ax.legend()
+        # ax.grid(True)
 
        
         new_node = self.state.copy()
         new_node[0:3,3] = closest_node
-        print(f"New node : {new_node}")
+        # print(f"New node : {new_node}")
         print(f"actual theta : {closest_theta}")
         # thetas, success = self.inverse_kinematics(new_node, initial_guess=self.thetas)
-        try_thetas = self.inverse_kinematics_3d( proposed_pos[0], proposed_pos[1], proposed_pos[2])
+        try_thetas , success = self.inverse_kinematics_3d( proposed_pos[0], proposed_pos[1], proposed_pos[2])
         thetas_signal = self.to_transformed_signal(try_thetas, self.thetas)
 
 
@@ -263,7 +309,8 @@ class Robot:
         print(f"theta moving (in radian):{thetas}")
         thetas_signal = thetas_signal
         print(f"signal theta moving (in degree): {thetas_signal}")
-        self.ser.write(f"{thetas_signal[0]},{thetas_signal[1]},{thetas_signal[2]}\n".encode())
+        if not self.test_mode:
+            self.ser.write(f"{thetas_signal[0]},{thetas_signal[1]},{thetas_signal[2]}\n".encode())
         print(f"Succes: {success}")
 
         # update
@@ -302,7 +349,7 @@ class Robot:
         theta1 = np.arctan2(y, x)  # rotation around Z to reach y-axis
 
         # 2. Project the target onto the YZ plane by rotating into frame
-        y_proj = np.sqrt((x)**2 + y**2) - x_offset
+        y_proj = np.sqrt(x**2 + y**2) - x_offset
         z_eff = z - L1  # offset for base height
         
         # 3. Compute r for planar arm (in YZ)
@@ -311,7 +358,7 @@ class Robot:
 
         # Check reachability
         if r > (L2 + L3) or r < abs(L2 - L3):
-            raise ValueError("Target is out of reach")
+            return (None, None) ,False
 
         # 4. Two possible θ3 (elbow angle)
         cos_theta3 = (r**2 - L2**2 - L3**2) / (2 * L2 * L3)
@@ -336,7 +383,7 @@ class Robot:
         sol_down_deg = np.rad2deg(sol_down)
 
 
-        return sol_up_deg, sol_down_deg
+        return (sol_up_deg, sol_down_deg) , True
 
  
 
@@ -552,59 +599,47 @@ class Robot:
 if __name__ == "__main__":
 
     robot = Robot(L1=7.14, L2=7, L3=8.34 , x_offset=0.9185 , y_offset=0, z_offset=0, serial_port='COM3', test_mode=False)
-    from pynput import keyboard
+    import keyboard
     import time
+    import matplotlib.pyplot as plt
 
-    current_key = None
+    try:
+        print("Use arrow keys to move, W/S for Z, Space to stop, ESC to exit.")
+        while True:
+            if keyboard.is_pressed("right"):
+                action = 0
+            elif keyboard.is_pressed("up"):
+                action = 1
+            elif keyboard.is_pressed("w"):
+                action = 2
+            elif keyboard.is_pressed("left"):
+                action = 3
+            elif keyboard.is_pressed("down"):
+                action = 4
+            elif keyboard.is_pressed("s"):
+                action = 5
+            elif keyboard.is_pressed("space"):
+                action = 6
+            elif keyboard.is_pressed("esc"):
+                print("\nExiting...")
+                break
+            else:
+                time.sleep(0.05)
+                continue
 
-    def on_press(key):
-        global current_key
-        try:
-            k = key.char
-        except AttributeError:
-            k = key.name  # For arrow keys, esc, space, etc.
-        current_key = k
-
-    def on_release(key):
-        global current_key
-        current_key = None
-        if key == keyboard.Key.esc:
-            print("\nExiting...")
-            return False  # This will stop the listener
-
-    print("Use arrow keys to move, W/S for Z, Space to stop, ESC to exit.")
-
-    listener = keyboard.Listener(on_press=on_press, on_release=on_release)
-    listener.start()
-
-    while listener.running:
-        action = None
-
-        if current_key == "right":
-            action = 0
-        elif current_key == "up":
-            action = 1
-        elif current_key == "w":
-            action = 2
-        elif current_key == "left":
-            action = 3
-        elif current_key == "down":
-            action = 4
-        elif current_key == "s":
-            action = 5
-        elif current_key == "space":
-            action = 6
-
-        if action is not None:
             success = robot.retry(action)
             if success:
                 print(f"Action {action} executed successfully.")
                 print("New position:", robot.state)
+               
             else:
                 print(f"Action {action} failed.")
-            time.sleep(0.2)  # avoid spamming the same key
-        else:
-            time.sleep(0.05)
+
+            # robot.plot_robot(ax)
+            time.sleep(0.1)
+
+    except KeyboardInterrupt:
+        print("\nInterrupted. Exiting...")
 
    
     # print("done ")
